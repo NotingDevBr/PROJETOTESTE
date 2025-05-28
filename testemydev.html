@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Reflexo e Atenção</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Variáveis Globais do Firebase acessíveis no script abaixo
+        window.firebaseApp = null;
+        window.db = null;
+        window.auth = null;
+        window.userId = null;
+        window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // Usa __app_id do Canvas
+
+        // Expondo as funções do Firestore globalmente
+        window.collection = collection;
+        window.addDoc = addDoc;
+        window.query = query;
+        window.getDocs = getDocs;
+        window.orderBy = orderBy;
+
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                window.firebaseApp = initializeApp(firebaseConfig);
+                window.db = getFirestore(window.firebaseApp);
+                window.auth = getAuth(window.firebaseApp);
+
+                // Autentica anonimamente ou com token personalizado
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(window.auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(window.auth);
+                }
+
+                onAuthStateChanged(window.auth, (user) => {
+                    if (user) {
+                        window.userId = user.uid;
+                        console.log("Firebase inicializado e usuário autenticado:", window.userId);
+                        // Carrega os dados do dashboard após a autenticação bem-sucedida
+                        loadDashboardData();
+                    } else {
+                        // Usuário desconectado
+                        console.log("Nenhum usuário logado. Usando ID anônimo.");
+                        window.userId = crypto.randomUUID(); // Fallback para usuários não autenticados
+                        loadDashboardData(); // Tenta carregar mesmo assim, mas os dados serão novos para esta sessão
+                    }
+                });
+
+            } catch (error) {
+                console.error("Erro ao inicializar Firebase ou autenticar:", error);
+                // Fallback userId se o Firebase falhar
+                window.userId = crypto.randomUUID();
+                loadDashboardData();
+            }
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            @apply bg-gray-50 text-gray-800;
+        }
+        /* Estilo personalizado para botões */
+        .game-button {
+            @apply inline-flex items-center justify-center px-8 py-4 border border-transparent text-lg font-bold rounded-full shadow-lg text-white bg-gradient-to-r from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-300 ease-in-out;
+            box-shadow: 0 6px 20px rgba(0, 0, 255, 0.3);
+        }
+        .game-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0, 0, 255, 0.4);
+        }
+        .arrow {
+            /* Estilo para o quadrado */
+            width: 123px; /* Tamanho do quadrado */
+            height: 123px; /* Tamanho do quadrado */
+            border-radius: 8px; /* Cantos arredondados */
+            @apply absolute font-bold cursor-pointer select-none transition-opacity duration-300 transform hover:scale-110;
+        }
+        .bg-blue-500 { /* Cor para quadrados "corretos" */
+            background-color: #3b82f6; /* Tailwind blue-500 */
+        }
+        .bg-blue-800 { /* Cor para quadrados "errados" */
+            background-color: #1e40af; /* Tailwind blue-800 (mais escuro) */
+        }
+        @media (max-width: 768px) {
+            .arrow {
+                width: 90px;
+                height: 90px;
+            }
+        }
+        @media (max-width: 480px) {
+            .arrow {
+                width: 70px;
+                height: 70px;
+            }
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+    <header class="bg-gradient-to-r from-green-600 to-teal-800 text-white py-12 px-4 text-center shadow-lg rounded-b-xl">
+        <div class="container mx-auto">
+            <h1 class="text-4xl sm:text-5xl md:text-6xl font-bold mb-4 tracking-tight">Teste de Reflexo e Atenção</h1>
+            <p class="text-lg sm:text-xl opacity-90 max-w-2xl mx-auto">Pressione a barra de espaço na cor correta!</p>
+            <p class="text-sm mt-2 opacity-70">Seu ID de Usuário: <span id="user-id-display" class="font-mono text-yellow-300 break-all">Carregando...</span></p>
+        </div>
+    </header>
+
+    <main class="flex-grow container mx-auto py-12 px-4 flex flex-col items-center justify-center">
+        <div id="game-container" class="relative w-full max-w-3xl h-96 bg-white rounded-xl shadow-2xl overflow-hidden border-4 border-gray-200">
+            <div id="instruction-area" class="absolute inset-0 flex flex-col items-center justify-center bg-blue-50 text-blue-800 text-center p-4 rounded-xl z-20 hidden">
+                <p class="text-2xl sm:text-3xl font-semibold mb-4">Pressione o:</p>
+                <div class="flex items-center justify-center mb-4">
+                    <span id="correct-square-color-text" class="text-5xl sm:text-6xl md:text-7xl font-extrabold mr-4"></span>
+                    <div id="correct-square-color-visual" class="w-24 h-24 sm:w-32 sm:h-32 rounded-lg shadow-lg"></div>
+                </div>
+                <p class="text-xl sm:text-2xl font-medium">Prepare-se! O teste começa em breve...</p>
+            </div>
+
+            <div id="game-overlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-80 text-white text-center rounded-xl z-30 hidden">
+                <h2 class="text-4xl sm:text-5xl font-bold mb-4">Fim de Jogo!</h2>
+                <p class="text-2xl sm:text-3xl mb-6">Sua pontuação final: <span id="final-score" class="text-yellow-400 font-extrabold">0</span></p>
+                <button id="play-again-button" class="game-button">Jogar Novamente</button>
+            </div>
+
+            <div id="game-board" class="absolute inset-0">
+                </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row justify-center items-center mt-8 space-y-4 sm:space-y-0 sm:space-x-8 w-full max-w-3xl">
+            <button id="start-button" class="game-button">Iniciar Teste</button>
+            <div class="text-2xl font-semibold text-gray-700">
+                Pontuação: <span id="score-display" class="font-extrabold text-blue-600">0</span>
+            </div>
+            <div class="text-2xl font-semibold text-gray-700">
+                Tempo: <span id="timer-display" class="font-extrabold text-blue-600">30s</span>
+            </div>
+        </div>
+
+        <div class="mt-12 w-full max-w-3xl bg-white p-8 rounded-xl shadow-2xl border-4 border-gray-200">
+            <h2 class="text-3xl font-bold text-gray-900 mb-6 text-center">Seu Dashboard</h2>
+            <div id="dashboard-content" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-blue-50 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold text-blue-800 mb-2">Evolução (Média de Pontos)</h3>
+                    <p class="text-3xl font-bold text-blue-600" id="avg-score-display">--</p>
+                    <p class="text-sm text-gray-600 mt-2" id="score-feedback">--</p>
+                </div>
+                <div class="bg-green-50 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold text-green-800 mb-2">Concentração (Tempo de Reação Médio)</h3>
+                    <p class="text-3xl font-bold text-green-600" id="avg-reaction-time-display">-- ms</p>
+                    <p class="text-sm text-gray-600 mt-2" id="concentration-feedback">--</p>
+                </div>
+                <div class="bg-yellow-50 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold text-yellow-800 mb-2">Controle de Impulso (Pressionamentos Errados)</h3>
+                    <p class="text-3xl font-bold text-yellow-600" id="impulse-control-display">--</p>
+                    <p class="text-sm text-gray-600 mt-2" id="impulse-feedback">--</p>
+                </div>
+                <div class="bg-red-50 p-6 rounded-lg shadow-md">
+                    <h3 class="text-xl font-semibold text-red-800 mb-2">Ansiedade (Ações Perdidas)</h3>
+                    <p class="text-3xl font-bold text-red-600" id="missed-actions-display">--</p>
+                    <p class="text-sm text-gray-600 mt-2" id="anxiety-feedback">--</p>
+                </div>
+            </div>
+
+            <div class="mt-8 bg-purple-50 p-6 rounded-lg shadow-md text-center">
+                <h3 class="text-xl font-semibold text-purple-800 mb-2">Avaliação de Aptidão</h3>
+                <p id="aptitude-assessment" class="text-sm text-gray-600">Jogue mais para uma avaliação de aptidão!</p>
+                <p class="text-xs text-gray-500 mt-2">Esta é uma avaliação simulada baseada no seu desempenho no jogo e não substitui uma avaliação profissional.</p>
+            </div>
+
+            <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-gray-100 p-4 rounded-lg shadow-inner">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4 text-center">Evolução da Pontuação</h3>
+                    <canvas id="scoreChart"></canvas>
+                </div>
+                <div class="bg-gray-100 p-4 rounded-lg shadow-inner">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4 text-center">Tempo de Reação (ms)</h3>
+                    <canvas id="reactionTimeChart"></canvas>
+                </div>
+                <div class="bg-gray-100 p-4 rounded-lg shadow-inner">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4 text-center">Pressionamentos Errados</h3>
+                    <canvas id="impulseChart"></canvas>
+                </div>
+                <div class="bg-gray-100 p-4 rounded-lg shadow-inner">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4 text-center">Ações Perdidas</h3>
+                    <canvas id="anxietyChart"></canvas>
+                </div>
+                <div class="bg-gray-100 p-4 rounded-lg shadow-inner col-span-1 lg:col-span-2">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4 text-center">Atenção (Tempo de Reação vs. Ações Perdidas)</h3>
+                    <canvas id="attentionBubbleChart"></canvas>
+                </div>
+            </div>
+
+            <div class="mt-6 text-center">
+                <p class="text-sm text-gray-600">Os dados são salvos automaticamente para o seu ID de Usuário.</p>
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-gray-800 text-white py-6 px-4 text-center rounded-t-xl mt-8">
+        <div class="container mx-auto">
+            <p class="text-sm opacity-80">&copy; 2025 João Santos. Todos os direitos reservados.</p>
+        </div>
+    </footer>
+
+    <script>
+        // Variáveis Globais do Jogo
+        let isGameRunning = false;
+        let correctColorType = ''; // 'light' ou 'dark'
+        let score = 0;
+        let gameTimer = 30; // Duração do jogo em segundos
+        let gameCountdownInterval;
+        const squareDuration = 1500; // Tempo em milissegundos que um quadrado fica na tela
+        const squareSize = 123; // Tamanho do quadrado para posicionamento
+        const padding = 30; // Espaçamento das bordas
+
+        let currentSquareData = null; // Armazena dados para o quadrado atualmente visível
+        let impulseControlPresses = 0; // Pressionamentos da barra de espaço quando nenhum quadrado ou quadrado errado está ativo
+        let reactionTimes = []; // Armazena tempos de reação para pressionamentos corretos
+        let missedCorrectSquares = 0; // Contagem de quadrados corretos que desapareceram sem serem pressionados
+
+        // Referências aos Elementos do DOM
+        const startButton = document.getElementById('start-button');
+        const playAgainButton = document.getElementById('play-again-button');
+        const scoreDisplay = document.getElementById('score-display');
+        const timerDisplay = document.getElementById('timer-display');
+        const instructionArea = document.getElementById('instruction-area');
+        const correctSquareColorText = document.getElementById('correct-square-color-text');
+        const correctSquareColorVisual = document.getElementById('correct-square-color-visual');
+        const gameBoard = document.getElementById('game-board');
+        const gameOverlay = document.getElementById('game-overlay');
+        const finalScoreDisplay = document.getElementById('final-score');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const aptitudeAssessment = document.getElementById('aptitude-assessment');
+
+
+        // Elementos do Dashboard
+        const avgScoreDisplay = document.getElementById('avg-score-display');
+        const avgReactionTimeDisplay = document.getElementById('avg-reaction-time-display');
+        const impulseControlDisplay = document.getElementById('impulse-control-display');
+        const missedActionsDisplay = document.getElementById('missed-actions-display');
+
+        const scoreFeedback = document.getElementById('score-feedback');
+        const concentrationFeedback = document.getElementById('concentration-feedback');
+        const impulseFeedback = document.getElementById('impulse-feedback');
+        const anxietyFeedback = document.getElementById('anxiety-feedback');
+
+        // Instâncias dos gráficos
+        let scoreChartInstance = null;
+        let reactionTimeChartInstance = null;
+        let impulseChartInstance = null;
+        let anxietyChartInstance = null;
+        let attentionBubbleChartInstance = null; // Nova instância para o gráfico de bolinhas
+
+        // Listeners de Eventos
+        startButton.addEventListener('click', startGame);
+        playAgainButton.addEventListener('click', startGame);
+        document.addEventListener('keydown', handleKeyDown); // Escuta por pressionamentos de tecla
+
+        /**
+         * Inicia o jogo.
+         * Reseta a pontuação e o tempo, define a cor correta e inicia a contagem regressiva.
+         */
+        function startGame() {
+            if (!window.userId) {
+                console.warn("Firebase não totalmente inicializado. Por favor, aguarde.");
+                // Opcionalmente, mostre uma mensagem ao usuário aqui
+                return;
+            }
+
+            isGameRunning = true;
+            score = 0;
+            gameTimer = 30;
+            impulseControlPresses = 0;
+            reactionTimes = [];
+            missedCorrectSquares = 0; // Resetar para quadrados
+            currentSquareData = null; // Reseta os dados do quadrado atual
+
+            scoreDisplay.textContent = score;
+            timerDisplay.textContent = `${gameTimer}s`;
+
+            // Limpa quaisquer quadrados existentes na tela
+            gameBoard.innerHTML = '';
+
+            // Esconde o overlay de fim de jogo e mostra a área de instrução
+            gameOverlay.classList.add('hidden');
+            instructionArea.classList.remove('hidden');
+            startButton.classList.add('hidden'); // Esconde o botão de iniciar
+
+            // Define aleatoriamente o tipo de cor correta para este jogo
+            const colorTypes = ['light', 'dark'];
+            correctColorType = colorTypes[Math.floor(Math.random() * colorTypes.length)];
+
+            // Atualiza a exibição da instrução de cor
+            if (correctColorType === 'light') {
+                correctSquareColorText.textContent = 'Quadrado Azul Claro';
+                correctSquareColorVisual.classList.add('bg-blue-500');
+                correctSquareColorVisual.classList.remove('bg-blue-800');
+            } else {
+                correctSquareColorText.textContent = 'Quadrado Azul Escuro';
+                correctSquareColorVisual.classList.add('bg-blue-800');
+                correctSquareColorVisual.classList.remove('bg-blue-500');
+            }
+
+            // Inicia a contagem regressiva da instrução
+            setTimeout(() => {
+                instructionArea.classList.add('hidden'); // Esconde a instrução
+                // Limpa os visuais da instrução após a fase de instrução
+                correctSquareColorVisual.classList.remove('bg-blue-500', 'bg-blue-800');
+                correctSquareColorText.textContent = '';
+                generateSquare(); // Gera o primeiro quadrado
+                startTimer(); // Inicia o timer do jogo
+            }, 3000); // Instrução visível por 3 segundos
+        }
+
+        /**
+         * Inicia o timer de contagem regressiva do jogo.
+         */
+        function startTimer() {
+            clearInterval(gameCountdownInterval); // Limpa qualquer timer existente
+            gameCountdownInterval = setInterval(() => {
+                gameTimer--;
+                timerDisplay.textContent = `${gameTimer}s`;
+                if (gameTimer <= 0) {
+                    endGame(); // Termina o jogo quando o tempo acaba
+                }
+            }, 1000); // Atualiza a cada segundo
+        }
+
+        /**
+         * Gera um novo quadrado na tela.
+         * O quadrado pode ter a cor "correta" ou "errada" em relação à instrução.
+         */
+        function generateSquare() {
+            if (!isGameRunning) return; // Não gera quadrados se o jogo não estiver rodando
+
+            // Garante que apenas um quadrado esteja na tela por vez
+            gameBoard.innerHTML = '';
+            currentSquareData = null; // Limpa os dados do quadrado anterior
+
+            const boardRect = gameBoard.getBoundingClientRect();
+            console.log("Dimensões do Game Board (getBoundingClientRect):", boardRect.width, "x", boardRect.height);
+
+            // Adicionar uma verificação para dimensões mínimas
+            if (boardRect.width < squareSize + (2 * padding) || boardRect.height < squareSize + (2 * padding)) {
+                console.warn("Área de jogo muito pequena para posicionar o quadrado com padding. Redimensionando ou ajustando CSS pode ser necessário.");
+                // Poderíamos adicionar um fallback ou uma mensagem de erro para o usuário aqui.
+            }
+
+            const squareId = `square-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+            const squareElement = document.createElement('div');
+            squareElement.id = squareId;
+            squareElement.classList.add('arrow'); // Aplica estilos base do quadrado
+
+            // Define aleatoriamente o tipo de cor do quadrado a ser exibido
+            const displayColorTypes = ['light', 'dark'];
+            const displayColorType = displayColorTypes[Math.floor(Math.random() * displayColorTypes.length)];
+            
+            // Determina se este quadrado é "correto" ou "errado" baseado na cor definida para o jogo
+            const squareType = (displayColorType === correctColorType) ? 'correct' : 'wrong';
+            
+            squareElement.setAttribute('data-color-type', displayColorType); // Cor visual do quadrado
+            squareElement.setAttribute('data-type', squareType); // Tipo do quadrado ('correct' ou 'wrong')
+
+            // Aplica a cor do quadrado
+            if (displayColorType === 'light') {
+                squareElement.classList.add('bg-blue-500'); // Azul mais claro
+                squareElement.classList.remove('bg-blue-800');
+            } else {
+                squareElement.classList.add('bg-blue-800'); // Azul mais escuro
+                squareElement.classList.remove('bg-blue-500');
+            }
+
+            // Posiciona o quadrado aleatoriamente em um dos quatro cantos
+            const squareWidth = squareSize;
+            const squareHeight = squareSize;
+
+            let randomTop, randomLeft;
+            const cornerIndex = Math.floor(Math.random() * 4); // 0: superior esquerdo, 1: superior direito, 2: inferior esquerdo, 3: inferior direito
+            let cornerName = ''; // Para log no console
+
+            switch (cornerIndex) {
+                case 0: // Canto superior esquerdo
+                    randomTop = padding;
+                    randomLeft = padding;
+                    cornerName = 'Canto Superior Esquerdo';
+                    break;
+                case 1: // Canto superior direito
+                    randomTop = padding;
+                    randomLeft = boardRect.width - squareWidth - padding;
+                    cornerName = 'Canto Superior Direito';
+                    break;
+                case 2: // Canto inferior esquerdo
+                    randomTop = boardRect.height - squareHeight - padding;
+                    randomLeft = padding;
+                    cornerName = 'Canto Inferior Esquerdo';
+                    break;
+                case 3: // Canto inferior direito
+                    randomTop = boardRect.height - squareHeight - padding;
+                    randomLeft = boardRect.width - squareWidth - padding;
+                    cornerName = 'Canto Inferior Direito';
+                    break;
+            }
+
+            // Garante que as coordenadas não saiam dos limites, especialmente em telas pequenas
+            randomTop = Math.max(padding, Math.min(randomTop, boardRect.height - squareHeight - padding));
+            randomLeft = Math.max(padding, Math.min(randomLeft, boardRect.width - squareWidth - padding));
+
+            squareElement.style.top = `${randomTop}px`;
+            squareElement.style.left = `${randomLeft}px`;
+
+            gameBoard.appendChild(squareElement);
+
+            // Adiciona log para depuração
+            console.log("Quadrado posicionado em:", cornerName, { top: randomTop, left: randomLeft }, "Tipo:", squareType, "Cor Visual:", displayColorType, "Cor Correta para este jogo:", correctColorType);
+
+            // Armazena os dados do quadrado atual para o tratamento do keydown
+            currentSquareData = {
+                id: squareId,
+                type: squareType, // 'correct' ou 'wrong'
+                displayColorType: displayColorType, // 'light' ou 'dark'
+                timestampAppeared: Date.now()
+            };
+
+            // Remove o quadrado após um tempo se não for pressionado e gera o próximo
+            setTimeout(() => {
+                const currentSquare = document.getElementById(squareId);
+                if (currentSquare && isGameRunning && currentSquareData && currentSquareData.id === squareId) {
+                    // Isso significa que o quadrado não foi pressionado
+                    currentSquare.classList.add('opacity-0'); // Inicia a transição de fade out
+                    setTimeout(() => {
+                        if (currentSquare.parentNode) {
+                            currentSquare.parentNode.removeChild(currentSquare);
+                        }
+                        currentSquareData = null; // Limpa os dados do quadrado após a remoção
+                        generateSquare(); // Gera o próximo quadrado
+                    }, 300); // Tempo para a transição de opacidade
+
+                    // Contabiliza se um quadrado "correto" for perdido (não pressionado) - APENAS PARA DASHBOARD
+                    if (squareType === 'correct') {
+                        missedCorrectSquares++; // Contabiliza para o dashboard
+                    }
+                }
+            }, squareDuration); // Usar squareDuration
+        }
+
+        /**
+         * Lida com o pressionamento de teclas.
+         * @param {KeyboardEvent} event - O evento de teclado.
+         */
+        function handleKeyDown(event) {
+            if (!isGameRunning) return;
+
+            if (event.code === 'Space') {
+                event.preventDefault(); // Previne a rolagem da página ao pressionar a barra de espaço
+
+                if (currentSquareData) {
+                    const reactionTime = Date.now() - currentSquareData.timestampAppeared;
+                    const pressedSquareId = currentSquareData.id;
+                    const pressedSquareType = currentSquareData.type; // 'correct' ou 'wrong'
+
+                    const pressedSquareElement = document.getElementById(pressedSquareId);
+                    if (!pressedSquareElement) return; // Quadrado já removido
+
+                    // Remove o quadrado visualmente
+                    pressedSquareElement.classList.add('opacity-0');
+                    setTimeout(() => {
+                        if (pressedSquareElement.parentNode) {
+                            pressedSquareElement.parentNode.removeChild(pressedSquareElement);
+                        }
+                        currentSquareData = null; // Limpa os dados do quadrado após a remoção
+                        generateSquare(); // Gera o próximo quadrado
+                    }, 300);
+
+                    if (pressedSquareType === 'correct') {
+                        score++; // Aumenta a pontuação apenas para acertos
+                        reactionTimes.push(reactionTime); // Registra o tempo de reação para pressionamentos corretos
+                    } else { // Pressionou um quadrado errado
+                        impulseControlPresses++; // Contabiliza para o dashboard, mas não diminui a pontuação
+                    }
+                } else { // Barra de espaço pressionada quando nenhum quadrado está ativo
+                    impulseControlPresses++; // Contabiliza para o dashboard, mas não diminui a pontuação
+                }
+                scoreDisplay.textContent = score;
+            }
+        }
+
+        /**
+         * Termina o jogo.
+         * Limpa intervalos, exibe a pontuação final e salva os resultados.
+         */
+        async function endGame() {
+            isGameRunning = false;
+            clearInterval(gameCountdownInterval);
+
+            // Limpa todos os quadrados restantes na tela
+            gameBoard.innerHTML = '';
+            currentSquareData = null; // Garante que não haja dados de quadrado ativos
+
+            finalScoreDisplay.textContent = score; // Exibe a pontuação final
+            gameOverlay.classList.remove('hidden'); // Mostra o overlay de fim de jogo
+            console.log("Overlay de fim de jogo visível."); // Log para depuração
+
+            // Salva os resultados do jogo no Firestore
+            if (window.db && window.userId) {
+                try {
+                    const gameResult = {
+                        userId: window.userId,
+                        score: score,
+                        correctPresses: reactionTimes.length,
+                        wrongPresses: impulseControlPresses, // Inclui pressionamentos em quadrados errados e pressionamentos vazios
+                        missedCorrectSquares: missedCorrectSquares, // Usando missedCorrectSquares agora
+                        averageReactionTime: reactionTimes.length > 0 ? reactionTimes.reduce((a, b) => a + b, 0) / reactionTimes.length : 0,
+                        timestamp: Date.now()
+                    };
+                    console.log("Tentando salvar resultado do jogo:", gameResult); // Log antes de salvar
+                    console.log("Caminho da coleção para salvar:", `/artifacts/${window.appId}/users/${window.userId}/game_results`); // Log do caminho
+                    const collectionPath = `/artifacts/${window.app_id}/users/${window.userId}/game_results`; // Corrigido para usar __app_id
+                    await window.addDoc(window.collection(window.db, collectionPath), gameResult); // Use window.addDoc e window.collection
+                    console.log("Resultado do jogo salvo no Firestore com sucesso!");
+                    loadDashboardData(); // Recarrega o dashboard após salvar
+                } catch (e) {
+                    console.error("Erro ao salvar resultado do jogo no Firestore:", e);
+                    // Você pode adicionar uma mensagem visível para o usuário aqui, se necessário.
+                }
+            } else {
+                console.warn("Firestore ou userId não estão prontos para salvar dados. Resultado não salvo.");
+            }
+        }
+
+        /**
+         * Carrega e exibe os dados do dashboard do Firestore.
+         */
+        async function loadDashboardData() {
+            if (!window.db || !window.userId) {
+                console.warn("Firestore ou userId não estão disponíveis para carregar o dashboard. Retornando.");
+                userIdDisplay.textContent = "Erro de carregamento.";
+                // Define todos os feedbacks para o estado de erro padrão imediatamente
+                const feedbackElements = [scoreFeedback, concentrationFeedback, impulseFeedback, anxietyFeedback];
+                feedbackElements.forEach(el => {
+                    el.textContent = "Erro ao carregar feedback.";
+                    el.classList.remove('text-green-600', 'text-yellow-600');
+                    el.classList.add('text-red-600'); // Indica estado de erro
+                });
+                avgScoreDisplay.textContent = "Erro";
+                avgReactionTimeDisplay.textContent = "Erro";
+                impulseControlDisplay.textContent = "Erro";
+                missedActionsDisplay.textContent = "Erro";
+                aptitudeAssessment.textContent = "Erro ao carregar avaliação.";
+                aptitudeAssessment.classList.remove('text-green-600', 'text-blue-600', 'text-red-600');
+                aptitudeAssessment.classList.add('text-red-600');
+                return; // Sai cedo se o Firebase não estiver pronto
+            }
+
+            userIdDisplay.textContent = window.userId; // Exibe o ID do usuário
+
+            try {
+                const collectionPath = `/artifacts/${window.app_id}/users/${window.userId}/game_results`; // Corrigido para usar __app_id
+                console.log("Tentando carregar dados do dashboard da coleção:", collectionPath); // Log antes de buscar
+                const q = window.query(window.collection(window.db, collectionPath), window.orderBy("timestamp", "asc")); // Use window.query, window.collection, window.orderBy
+                const querySnapshot = await window.getDocs(q); // Use window.getDocs
+
+                let allGameResults = [];
+                querySnapshot.forEach((doc) => {
+                    allGameResults.push(doc.data());
+                });
+                console.log("Dados brutos carregados do Firestore:", allGameResults); // Log após buscar
+
+                // Limpa os feedbacks antes de definir novos
+                const feedbackElements = [scoreFeedback, concentrationFeedback, impulseFeedback, anxietyFeedback];
+                feedbackElements.forEach(el => {
+                    el.classList.remove('text-green-600', 'text-red-600', 'text-yellow-600');
+                    el.classList.add('text-gray-600'); // Cor neutra padrão
+                });
+                aptitudeAssessment.classList.remove('text-green-600', 'text-blue-600', 'text-red-600');
+                aptitudeAssessment.classList.add('text-gray-600');
+
+
+                // Calcula as médias gerais
+                let totalScore = 0;
+                let totalReactionTimeSum = 0;
+                let totalCorrectPressesCount = 0;
+                let totalWrongPresses = 0;
+                let totalMissedCorrectSquares = 0; // Usando o nome da propriedade no Firestore
+
+                allGameResults.forEach(data => {
+                    totalScore += data.score;
+                    totalReactionTimeSum += data.averageReactionTime * data.correctPresses;
+                    totalCorrectPressesCount += data.correctPresses;
+                    totalWrongPresses += data.wrongPresses;
+                    totalMissedCorrectSquares += data.missedCorrectSquares || data.missedCorrectArrows; // Compatibilidade com nome antigo
+                });
+
+                const gameCount = allGameResults.length;
+                const avgScore = gameCount > 0 ? (totalScore / gameCount).toFixed(1) : '--';
+                const avgReactionTime = totalCorrectPressesCount > 0 ? (totalReactionTimeSum / totalCorrectPressesCount).toFixed(0) : '--';
+
+                avgScoreDisplay.textContent = avgScore;
+                avgReactionTimeDisplay.textContent = `${avgReactionTime} ms`;
+                impulseControlDisplay.textContent = totalWrongPresses;
+                missedActionsDisplay.textContent = totalMissedCorrectSquares;
+
+                console.log("Médias calculadas:", { avgScore, avgReactionTime, totalWrongPresses, totalMissedCorrectSquares });
+
+                // Adaptação e feedback baseado nos últimos 3 testes
+                const lastThreeGames = allGameResults.slice(-3); // Pega os últimos 3 jogos
+                if (gameCount >= 3) {
+                    console.log("Contagem de jogos >= 3. Calculando feedback.");
+                    const lastThreeScores = lastThreeGames.map(g => g.score);
+                    const lastThreeReactionTimes = lastThreeGames.filter(g => g.correctPresses > 0).flatMap(g => {
+                        return g.averageReactionTime * g.correctPresses;
+                    });
+                    const lastThreeCorrectPresses = lastThreeGames.reduce((sum, g) => sum + g.correctPresses, 0);
+                    const lastThreeWrongPresses = lastThreeGames.reduce((sum, g) => sum + g.wrongPresses, 0);
+                    const lastThreeMissedActions = lastThreeGames.reduce((sum, g) => sum + (g.missedCorrectSquares || g.missedCorrectArrows), 0); // Compatibilidade
+
+                    const avgLastThreeScore = lastThreeScores.reduce((a, b) => a + b, 0) / lastThreeScores.length;
+                    const avgLastThreeReactionTime = lastThreeCorrectPresses > 0 ? (lastThreeReactionTimes.reduce((a, b) => a + b, 0) / lastThreeCorrectPresses).toFixed(0) : 0;
+
+                    // Feedback de Evolução (Pontuação)
+                    // Garante que avgScore é um número para comparação
+                    if (avgLastThreeScore > parseFloat(avgScore || '0')) {
+                        scoreFeedback.textContent = "Sua pontuação média está melhorando! Continue assim.";
+                        scoreFeedback.classList.remove('text-red-600', 'text-yellow-600');
+                        scoreFeedback.classList.add('text-green-600');
+                    } else if (avgLastThreeScore < parseFloat(avgScore || '0')) {
+                        scoreFeedback.textContent = "Sua pontuação média recente está um pouco abaixo. Tente focar mais!";
+                        scoreFeedback.classList.remove('text-green-600', 'text-yellow-600');
+                        scoreFeedback.classList.add('text-red-600');
+                    } else {
+                        scoreFeedback.textContent = "Sua pontuação média está estável.";
+                        scoreFeedback.classList.remove('text-green-600', 'text-red-600');
+                        scoreFeedback.classList.add('text-yellow-600');
+                    }
+
+                    // Feedback de Concentração (Tempo de Reação)
+                    // Garante que avgReactionTime é um número para comparação
+                    if (avgLastThreeReactionTime < parseFloat(avgReactionTime || '0') && avgLastThreeReactionTime > 0) {
+                        concentrationFeedback.textContent = "Seu tempo de reação está mais rápido! Ótima concentração.";
+                        concentrationFeedback.classList.remove('text-red-600', 'text-yellow-600');
+                        concentrationFeedback.classList.add('text-green-600');
+                    } else if (avgLastThreeReactionTime > parseFloat(avgReactionTime || '0')) {
+                        concentrationFeedback.textContent = "Seu tempo de reação está um pouco mais lento. Mantenha o foco!";
+                        concentrationFeedback.classList.remove('text-green-600', 'text-yellow-600');
+                        concentrationFeedback.classList.add('text-red-600');
+                    } else {
+                        concentrationFeedback.textContent = "Seu tempo de reação está estável.";
+                        concentrationFeedback.classList.remove('text-green-600', 'text-red-600');
+                        concentrationFeedback.classList.add('text-yellow-600');
+                    }
+
+                    // Feedback de Controle de Impulso (Pressionamentos Errados)
+                    const avgWrongPressesAll = totalWrongPresses / gameCount;
+                    const avgWrongPressesLastThree = lastThreeWrongPresses / 3;
+
+                    if (avgWrongPressesLastThree < avgWrongPressesAll) {
+                        impulseFeedback.textContent = "Você está controlando melhor seus impulsos! Menos erros.";
+                        impulseFeedback.classList.remove('text-red-600', 'text-yellow-600');
+                        impulseFeedback.classList.add('text-green-600');
+                    } else if (avgWrongPressesLastThree > avgWrongPressesAll) {
+                        impulseFeedback.textContent = "Cuidado com os impulsos! Mais pressionamentos errados.";
+                        impulseFeedback.classList.remove('text-green-600', 'text-yellow-600');
+                        impulseFeedback.classList.add('text-red-600');
+                    } else {
+                        impulseFeedback.textContent = "Seu controle de impulso está estável.";
+                        impulseFeedback.classList.remove('text-green-600', 'text-red-600');
+                        impulseFeedback.classList.add('text-yellow-600');
+                    }
+
+                    // Feedback de Ansiedade (Ações Perdidas)
+                    const avgMissedActionsAll = totalMissedCorrectSquares / gameCount;
+                    const avgMissedActionsLastThree = lastThreeMissedActions / 3;
+
+                    if (avgMissedActionsLastThree < avgMissedActionsAll) {
+                        anxietyFeedback.textContent = "Você está perdendo menos ações! Ótimo controle da ansiedade.";
+                        anxietyFeedback.classList.remove('text-red-600', 'text-yellow-600');
+                        anxietyFeedback.classList.add('text-green-600');
+                    } else if (avgMissedActionsLastThree > avgMissedActionsAll) {
+                        anxietyFeedback.textContent = "Você está perdendo mais ações. Tente manter a calma e o foco!";
+                        anxietyFeedback.classList.remove('text-green-600', 'text-yellow-600');
+                        anxietyFeedback.classList.add('text-red-600');
+                    } else {
+                        anxietyFeedback.textContent = "Suas ações perdidas estão estáveis.";
+                        anxietyFeedback.classList.remove('text-green-600', 'text-red-600');
+                        anxietyFeedback.classList.add('text-yellow-600');
+                    }
+
+                } else {
+                    console.log("Contagem de jogos < 3. Definindo feedback padrão.");
+                    const feedbackElements = [scoreFeedback, concentrationFeedback, impulseFeedback, anxietyFeedback];
+                    feedbackElements.forEach(el => {
+                        el.textContent = "Jogue mais 3 testes para análises detalhadas!";
+                        el.classList.remove('text-green-600', 'text-red-600', 'text-yellow-600');
+                        el.classList.add('text-gray-600');
+                    });
+                }
+
+                // Aptitude Assessment
+                let aptitudeMessage = "Jogue pelo menos 5 testes para uma avaliação de aptidão.";
+                let aptitudeColorClass = 'text-gray-600';
+
+                if (gameCount >= 5) { // Requer pelo menos 5 jogos para uma avaliação significativa
+                    const scoreRating = parseFloat(avgScore || '0');
+                    const reactionRating = parseFloat(avgReactionTime || '0');
+                    const impulseRating = totalWrongPresses;
+                    const anxietyRating = totalMissedCorrectSquares;
+
+                    let positiveTraits = 0;
+                    let negativeTraits = 0;
+
+                    // Avaliação de Pontuação (maior é melhor)
+                    if (scoreRating >= 20) positiveTraits++; // Limiar de exemplo
+                    else if (scoreRating < 10) negativeTraits++;
+
+                    // Avaliação do Tempo de Reação (menor é melhor)
+                    if (reactionRating > 0 && reactionRating <= 400) positiveTraits++; // Limiar de exemplo (ms)
+                    else if (reactionRating > 600) negativeTraits++;
+
+                    // Avaliação do Controle de Impulso (menor é melhor)
+                    if (impulseRating <= (gameCount * 0.2)) positiveTraits++; // Ex: menos de 20% de erros por jogo
+                    else if (impulseRating > (gameCount * 0.5)) negativeTraits++;
+
+                    // Avaliação da Ansiedade (menor é melhor)
+                    if (anxietyRating <= (gameCount * 0.1)) positiveTraits++; // Ex: menos de 10% de ações perdidas por jogo
+                    else if (anxietyRating > (gameCount * 0.3)) negativeTraits++;
+
+                    if (positiveTraits >= 3) {
+                        aptitudeMessage = "Excelente desempenho! Suas habilidades de atenção e reflexo estão em um nível elevado, indicando grande potencial para tarefas que exigem foco e agilidade.";
+                        aptitudeColorClass = 'text-green-600';
+                    } else if (positiveTraits >= 1 && negativeTraits <= 1) {
+                        aptitudeMessage = "Bom desempenho! Você demonstra boas habilidades de atenção e reflexo. Com um pouco mais de prática, pode alcançar níveis ainda mais altos.";
+                        aptitudeColorClass = 'text-blue-600';
+                    } else {
+                        aptitudeMessage = "Desempenho em desenvolvimento. Há espaço para melhorar suas habilidades de atenção e reflexo. A prática contínua pode trazer grandes avanços.";
+                        aptitudeColorClass = 'text-red-600';
+                    }
+                }
+
+                aptitudeAssessment.textContent = aptitudeMessage;
+                aptitudeAssessment.className = `text-sm mt-4 text-center ${aptitudeColorClass}`;
+
+
+                // Prepara dados para os gráficos
+                const labels = allGameResults.map((_, index) => `Jogo ${index + 1}`);
+                const scores = allGameResults.map(g => g.score);
+                const reactionTimesData = allGameResults.map(g => g.averageReactionTime);
+                const impulseData = allGameResults.map(g => g.wrongPresses);
+                const anxietyData = allGameResults.map(g => g.missedCorrectSquares || g.missedCorrectArrows); // Compatibilidade
+
+                // Dados para o gráfico de bolinhas (Atenção)
+                const attentionBubbleData = allGameResults.map((g, index) => ({
+                    x: index + 1, // Número do jogo no eixo X
+                    y: g.averageReactionTime, // Tempo de reação no eixo Y
+                    r: Math.max(5, (g.missedCorrectSquares || g.missedCorrectArrows) * 5) // Raio da bolinha baseado em ações perdidas (mínimo 5 para visibilidade)
+                }));
+
+
+                // Renderiza os gráficos
+                renderChart('scoreChart', 'line', 'Pontuação', labels, scores, 'rgba(75, 192, 192, 1)');
+                renderChart('reactionTimeChart', 'line', 'Tempo de Reação (ms)', labels, reactionTimesData, 'rgba(153, 102, 255, 1)');
+                renderChart('impulseChart', 'bar', 'Pressionamentos Errados', labels, impulseData, 'rgba(255, 159, 64, 1)');
+                renderChart('anxietyChart', 'bar', 'Ações Perdidas', labels, anxietyData, 'rgba(255, 99, 132, 1)');
+                renderBubbleChart('attentionBubbleChart', 'Atenção', attentionBubbleData, 'rgba(54, 162, 235, 0.6)'); // Renderiza o novo gráfico de bolinhas
+
+                console.log("Dados do Dashboard carregados com sucesso!");
+
+            } catch (e) {
+                console.error("Erro CRÍTICO ao carregar dados do dashboard:", e);
+                // Define todos os feedbacks para o estado de erro
+                const feedbackElements = [scoreFeedback, concentrationFeedback, impulseFeedback, anxietyFeedback];
+                feedbackElements.forEach(el => {
+                    el.textContent = "Erro ao carregar feedback.";
+                    el.classList.remove('text-green-600', 'text-yellow-600');
+                    el.classList.add('text-red-600'); // Indica estado de erro
+                });
+                avgScoreDisplay.textContent = "Erro";
+                avgReactionTimeDisplay.textContent = "Erro";
+                impulseControlDisplay.textContent = "Erro";
+                missedActionsDisplay.textContent = "Erro";
+                aptitudeAssessment.textContent = "Erro ao carregar avaliação.";
+                aptitudeAssessment.classList.remove('text-green-600', 'text-blue-600', 'text-red-600');
+                aptitudeAssessment.classList.add('text-red-600');
+            }
+        }
+
+        /**
+         * Função genérica para renderizar um gráfico Chart.js (linha/barra).
+         * @param {string} canvasId - O ID do elemento canvas.
+         * @param {string} type - O tipo de gráfico ('line', 'bar', etc.).
+         * @param {string} label - O rótulo do dataset.
+         * @param {Array<string>} labels - Os rótulos do eixo X.
+         * @param {Array<number>} data - Os dados para o gráfico.
+         * @param {string} borderColor - A cor da borda/linha do gráfico.
+         */
+        function renderChart(canvasId, type, label, labels, data, borderColor) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+
+            // Destrói a instância anterior do gráfico se existir
+            if (canvasId === 'scoreChart' && scoreChartInstance) scoreChartInstance.destroy();
+            if (canvasId === 'reactionTimeChart' && reactionTimeChartInstance) reactionTimeChartInstance.destroy();
+            if (canvasId === 'impulseChart' && impulseChartInstance) impulseChartInstance.destroy();
+            if (canvasId === 'anxietyChart' && anxietyChartInstance) anxietyChartInstance.destroy();
+
+            const newChartInstance = new Chart(ctx, {
+                type: type,
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: label,
+                        data: data,
+                        borderColor: borderColor,
+                        backgroundColor: type === 'bar' ? borderColor.replace('1)', '0.5)') : 'rgba(0, 0, 0, 0)', // Mais transparente para barras
+                        borderWidth: 2,
+                        tension: type === 'line' ? 0.4 : 0, // Curva para linhas
+                        fill: false // Não preenche a área abaixo da linha
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false // Esconde a legenda do dataset
+                        }
+                    }
+                }
+            });
+
+            // Armazena a nova instância
+            if (canvasId === 'scoreChart') scoreChartInstance = newChartInstance;
+            if (canvasId === 'reactionTimeChart') reactionTimeChartInstance = newChartInstance;
+            if (canvasId === 'impulseChart') impulseChartInstance = newChartInstance;
+            if (canvasId === 'anxietyChart') anxietyChartInstance = newChartInstance;
+        }
+
+        /**
+         * Função para renderizar um gráfico de bolinhas (Bubble Chart).
+         * @param {string} canvasId - O ID do elemento canvas.
+         * @param {string} label - O rótulo do dataset.
+         * @param {Array<Object>} data - Os dados para o gráfico no formato {x, y, r}.
+         * @param {string} backgroundColor - A cor de fundo das bolinhas.
+         */
+        function renderBubbleChart(canvasId, label, data, backgroundColor) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+
+            // Destrói a instância anterior do gráfico se existir
+            if (attentionBubbleChartInstance) attentionBubbleChartInstance.destroy();
+
+            attentionBubbleChartInstance = new Chart(ctx, {
+                type: 'bubble',
+                data: {
+                    datasets: [{
+                        label: label,
+                        data: data,
+                        backgroundColor: backgroundColor,
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Número do Teste'
+                            },
+                            beginAtZero: true
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Tempo de Reação Médio (ms)'
+                            },
+                            beginAtZero: true,
+                            reverse: false // Menor tempo de reação é melhor, então não inverte
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const dataPoint = context.raw;
+                                    return `Teste: ${dataPoint.x}, Reação: ${dataPoint.y}ms, Ações Perdidas: ${dataPoint.r / 5}`; // Divide por 5 para mostrar o valor real
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Configuração Inicial ao Carregar a Página
+        document.addEventListener('DOMContentLoaded', () => {
+            // Garante que os elementos de jogo estejam escondidos no início
+            instructionArea.classList.add('hidden');
+            gameOverlay.classList.add('hidden');
+        });
+    </script>
+</body>
+</html>

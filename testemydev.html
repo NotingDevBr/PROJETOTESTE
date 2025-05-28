@@ -11,12 +11,32 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, query, getDocs, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // --- INÍCIO DA CONFIGURAÇÃO FIREBASE PARA GITHUB PAGES ---
+        // VOCÊ PRECISA SUBSTITUIR OS PLACEHOLDERS ABAIXO PELAS SUAS PRÓPRIAS CREDENCIAIS DO FIREBASE!
+        // 1. Vá para o console do Firebase (console.firebase.google.com).
+        // 2. Selecione ou crie seu projeto.
+        // 3. Clique no ícone de "Engrenagem" (Configurações do projeto) -> "Configurações do projeto".
+        // 4. Role para baixo até "Seus apps" e selecione "Web" (o ícone </>).
+        // 5. Copie o objeto 'firebaseConfig' e o 'projectId'.
+
+        // Exemplo de como deve ser:
+        const firebaseConfig = {
+            apiKey: "SUA_API_KEY",
+            authDomain: "SEU_AUTH_DOMAIN",
+            projectId: "SEU_PROJECT_ID", // Este é o appId que você precisa
+            storageBucket: "SEU_STORAGE_BUCKET",
+            messagingSenderId: "SEU_MESSAGING_SENDER_ID",
+            appId: "SEU_APP_ID_WEB" // Geralmente começa com 1: e uma sequência de números
+        };
+        const YOUR_PROJECT_ID = firebaseConfig.projectId; // Use o projectId do seu firebaseConfig
+
         // Variáveis Globais do Firebase acessíveis no script abaixo
         window.firebaseApp = null;
         window.db = null;
         window.auth = null;
         window.userId = null;
-        window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // Usa __app_id do Canvas
+        // Use o projectId do seu próprio Firebase para o appId
+        window.appId = YOUR_PROJECT_ID;
 
         // Expondo as funções do Firestore globalmente
         window.collection = collection;
@@ -28,35 +48,28 @@
 
         document.addEventListener('DOMContentLoaded', async () => {
             try {
-                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                // Use o firebaseConfig que você definiu acima
                 window.firebaseApp = initializeApp(firebaseConfig);
                 window.db = getFirestore(window.firebaseApp);
                 window.auth = getAuth(window.firebaseApp);
 
-                // Autentica anonimamente ou com token personalizado
-                if (typeof __initial_auth_token !== 'undefined') {
-                    await signInWithCustomToken(window.auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(window.auth);
-                }
+                // Autentica anonimamente. Removido __initial_auth_token pois é do ambiente Canvas.
+                await signInAnonymously(window.auth);
 
                 onAuthStateChanged(window.auth, (user) => {
                     if (user) {
                         window.userId = user.uid;
                         console.log("Firebase inicializado e usuário autenticado:", window.userId);
-                        // Carrega os dados do dashboard após a autenticação bem-sucedida
                         loadDashboardData();
                     } else {
-                        // Usuário desconectado
                         console.log("Nenhum usuário logado. Usando ID anônimo.");
                         window.userId = crypto.randomUUID(); // Fallback para usuários não autenticados
-                        loadDashboardData(); // Tenta carregar mesmo assim, mas os dados serão novos para esta sessão
+                        loadDashboardData();
                     }
                 });
 
             } catch (error) {
                 console.error("Erro ao inicializar Firebase ou autenticar:", error);
-                // Fallback userId se o Firebase falhar
                 window.userId = crypto.randomUUID();
                 loadDashboardData();
             }
@@ -509,7 +522,7 @@
             console.log("Overlay de fim de jogo visível."); // Log para depuração
 
             // Salva os resultados do jogo no Firestore
-            if (window.db && window.userId) {
+            if (window.db && window.userId && window.appId) { // Adicionado window.appId
                 try {
                     const gameResult = {
                         userId: window.userId,
@@ -522,7 +535,7 @@
                     };
                     console.log("Tentando salvar resultado do jogo:", gameResult); // Log antes de salvar
                     console.log("Caminho da coleção para salvar:", `/artifacts/${window.appId}/users/${window.userId}/game_results`); // Log do caminho
-                    const collectionPath = `/artifacts/${window.app_id}/users/${window.userId}/game_results`; // Corrigido para usar __app_id
+                    const collectionPath = `/artifacts/${window.appId}/users/${window.userId}/game_results`; // Usando window.appId
                     await window.addDoc(window.collection(window.db, collectionPath), gameResult); // Use window.addDoc e window.collection
                     console.log("Resultado do jogo salvo no Firestore com sucesso!");
                     loadDashboardData(); // Recarrega o dashboard após salvar
@@ -531,7 +544,7 @@
                     // Você pode adicionar uma mensagem visível para o usuário aqui, se necessário.
                 }
             } else {
-                console.warn("Firestore ou userId não estão prontos para salvar dados. Resultado não salvo.");
+                console.warn("Firestore, userId ou appId não estão prontos para salvar dados. Resultado não salvo.");
             }
         }
 
@@ -539,8 +552,8 @@
          * Carrega e exibe os dados do dashboard do Firestore.
          */
         async function loadDashboardData() {
-            if (!window.db || !window.userId) {
-                console.warn("Firestore ou userId não estão disponíveis para carregar o dashboard. Retornando.");
+            if (!window.db || !window.userId || !window.appId) { // Adicionado window.appId
+                console.warn("Firestore, userId ou appId não estão disponíveis para carregar o dashboard. Retornando.");
                 userIdDisplay.textContent = "Erro de carregamento.";
                 // Define todos os feedbacks para o estado de erro padrão imediatamente
                 const feedbackElements = [scoreFeedback, concentrationFeedback, impulseFeedback, anxietyFeedback];
@@ -562,7 +575,7 @@
             userIdDisplay.textContent = window.userId; // Exibe o ID do usuário
 
             try {
-                const collectionPath = `/artifacts/${window.app_id}/users/${window.userId}/game_results`; // Corrigido para usar __app_id
+                const collectionPath = `/artifacts/${window.appId}/users/${window.userId}/game_results`; // Usando window.appId
                 console.log("Tentando carregar dados do dashboard da coleção:", collectionPath); // Log antes de buscar
                 const q = window.query(window.collection(window.db, collectionPath), window.orderBy("timestamp", "asc")); // Use window.query, window.collection, window.orderBy
                 const querySnapshot = await window.getDocs(q); // Use window.getDocs
